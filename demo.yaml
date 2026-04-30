@@ -5,8 +5,6 @@
 # Color convention in lambda mode (inverted):
 #   Color::WHITE  →  black ink
 #   Color::BLACK  →  white paper
-#
-# Partial refresh is demonstrated in partial_refresh_test.yaml.
 
 substitutions:
   device_name: crowpanel-demo
@@ -14,7 +12,7 @@ substitutions:
 esphome:
   name: ${device_name}
   on_boot:
-    priority: -200.0
+    priority: -100
     then:
       - component.update: my_display
 
@@ -102,7 +100,6 @@ display:
       mode:
         input: true
         pulldown: true
-    power_pin: GPIO7
     auto_clear_enabled: false
     update_interval: never
     lambda: |-

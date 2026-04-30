@@ -96,7 +96,6 @@ display:
       mode:
         input: true
         pulldown: true
-    rotation: 90°
     update_interval: never
     lambda: |-
       it.fill(Color::BLACK);  // clears screen to white (see color note below)
@@ -203,6 +202,47 @@ These photos show the 4-step partial refresh test (`partial_refresh_test.yaml`):
 
 ---
 
+## Battery Power-Down (Preventing the Black-Screen Flash)
+
+E-paper is bistable — the physical image is held by the electrophoretic particles with no power needed. However, as the battery voltage drops, the ESP32 crashes and the SPI/GPIO lines float. The SSD1683 chips can interpret that electrical noise as commands and fire a spurious refresh waveform, leaving the screen all-black.
+
+The fix is to call `power_down()` before voltage goes critical. This sends the SSD1683 **deep sleep command** (`0x10`, mode 1). In deep sleep the chips stop their internal oscillator and ignore all SPI signals, so any subsequent GPIO glitches can't trigger a refresh. The physical image is retained.
+
+### Option A — Battery voltage sensor (recommended)
+
+Monitor battery voltage with an ADC and call `power_down()` when it gets low:
+
+```yaml
+sensor:
+  - platform: adc
+    pin: GPIO3
+    id: battery_voltage
+    update_interval: 30s
+    filters:
+      - multiply: 2.0      # adjust for your voltage divider
+    on_value_range:
+      - below: 3.5         # adjust for your battery chemistry
+        then:
+          - lambda: "id(my_display).power_down();"
+```
+
+### Option B — on_shutdown hook
+
+ESPHome runs `on_shutdown` before OTA reboots and user-triggered restarts. It may also run during some brownout scenarios depending on your ESP-IDF brownout detector settings:
+
+```yaml
+esphome:
+  on_shutdown:
+    then:
+      - lambda: "id(my_display).power_down();"
+```
+
+> **Note:** For sudden power loss with no battery warning, there is no purely software solution. A small supercapacitor (e.g. 100–470 µF) on the display power rail can give the chips enough time to complete the deep sleep sequence after the main battery is exhausted.
+
+After a `power_down()` call the display wakes normally on the next boot — `setup()` sends a hardware reset which brings the chips back out of deep sleep.
+
+---
+
 ## Optional: Power Pin
 
 Add `power_pin: GPIO7` to force a hard power cycle of the display chip on boot. This clears any stuck BUSY state that a normal RST pulse can't recover from — useful after repeated OTA flashes or safe-mode cycles. Also required if your board controls display power for battery management.
@@ -244,14 +284,12 @@ In **LVGL mode** (`draw_pixels_at`) the luminance threshold applies:
 
 ---
 
-
 ## Known Limitations
 
 - Coordinates in `partial_refresh()` are always physical (landscape) regardless of `rotation` setting.
 - The `display()` and `partial_refresh()` calls block the main loop (~1–3 seconds) while the e-paper panel refreshes.
 - Ghosting accumulates with repeated partial refreshes — periodically call `display()` for a full refresh to clear it.
-- Tested and confirmed working on ESPHome **2026.3.x** with ESP-IDF framework only (not Arduino).
-- **Broken on ESPHome 2026.4.x** — lambda mode produces all-black screen due to changes in `DISPLAY_TYPE_BINARY` handling. Stay on 2026.3.x until this is resolved.
+- Tested and confirmed working on ESPHome **2026.3.x and 2026.4.x** with ESP-IDF framework only (not Arduino).
 
 ---
 

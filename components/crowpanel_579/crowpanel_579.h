@@ -23,6 +23,7 @@ class CrowPanel579 : public display::DisplayBuffer,
   void fill(Color color) override;
   void display();
   void partial_refresh(int x, int y, int w, int h);
+  void power_down();
 
   int get_width_internal() override { return 792; }
   int get_height_internal() override { return 272; }
