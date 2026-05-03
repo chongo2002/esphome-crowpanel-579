@@ -317,20 +317,6 @@ void CrowPanel579::partial_refresh(int x, int y, int w, int h) {
   this->wait_busy_();
 }
 
-void CrowPanel579::power_down() {
-  // SSD1683 deep sleep mode 1: internal oscillator stops, chips ignore all SPI
-  // traffic, but the e-paper physical image is retained (bistable). Call this
-  // before cutting power so that GPIO glitches during brownout can't trigger a
-  // spurious refresh waveform that would flash the screen black.
-  send_command_(0x10);
-  send_data_(0x01);
-  if (this->power_pin_ != nullptr) {
-    delay(20);
-    this->power_pin_->digital_write(false);
-  }
-  ESP_LOGI(TAG, "Display powered down");
-}
-
 void CrowPanel579::init_display_() {
   this->reset_();
   this->wait_busy_();
