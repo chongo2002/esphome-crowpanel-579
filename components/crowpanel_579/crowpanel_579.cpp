@@ -366,7 +366,8 @@ void CrowPanel579::init_display_() {
   send_command_(0x20);
   this->wait_busy_();
   send_command_(0x3C);
-  send_data_(0x01);     // border waveform
+  send_data_(0x03);     // border waveform (matches Arduino EPD_FastMode1Init)
+  this->wait_busy_();
 
   // Force a full screen clear regardless of prior display state.
   // Setting Old RAM = 0x00 (all-black) and New RAM = 0xFF (all-white) causes
