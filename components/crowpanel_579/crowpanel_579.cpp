@@ -97,6 +97,36 @@ void CrowPanel579::display() {
   send_data_(0xF7);
   send_command_(0x20);
   this->wait_busy_();
+
+  // After each refresh, copy the framebuffer to Old RAM on both chips.
+  // The SSD1683 selects per-pixel waveform phases by comparing Old RAM vs
+  // New RAM. The 0xF7 sequence does not auto-update Old RAM, so without this
+  // sync, Old RAM stays at the all-white init state. On the next refresh,
+  // pixels that should transition black→white are seen as white→white (no-op)
+  // and never clear — the display appears frozen after the first update.
+  set_ram_slave_();
+  send_command_(0xA6);
+  this->dc_pin_->digital_write(true);
+  this->enable();
+  for (uint32_t y = 0; y < 272; y++) {
+    uint32_t row = y * BYTES_PER_ROW;
+    for (uint32_t b = 0; b < BYTES_PER_HALF_ROW; b++)
+      this->write_byte(this->buffer_[row + b]);
+    if (y % 68 == 0) App.feed_wdt();
+  }
+  this->disable();
+
+  set_ram_master_();
+  send_command_(0x26);
+  this->dc_pin_->digital_write(true);
+  this->enable();
+  for (uint32_t y = 0; y < 272; y++) {
+    uint32_t row = y * BYTES_PER_ROW;
+    for (uint32_t b = BYTES_PER_HALF_ROW - 1; b < BYTES_PER_ROW; b++)
+      this->write_byte(this->buffer_[row + b]);
+    if (y % 68 == 0) App.feed_wdt();
+  }
+  this->disable();
 }
 
 void CrowPanel579::draw_absolute_pixel_internal(int x, int y, Color color) {
