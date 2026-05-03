@@ -97,36 +97,6 @@ void CrowPanel579::display() {
   send_data_(0xF7);
   send_command_(0x20);
   this->wait_busy_();
-
-  // Sync old RAM to match the screen state we just wrote.
-  // SSD1683 selects the per-pixel waveform phase by comparing old RAM vs new RAM.
-  // If old RAM is stale (e.g. still all-white from init), pixels that need to
-  // transition black→white are seen as white→white (no-op) and never clear — the
-  // display looks frozen after the first update. Writing old RAM after every refresh
-  // keeps the transition table correct for the next call.
-  set_ram_slave_();
-  send_command_(0xA6);
-  this->dc_pin_->digital_write(true);
-  this->enable();
-  for (uint32_t y = 0; y < 272; y++) {
-    uint32_t row = y * BYTES_PER_ROW;
-    for (uint32_t b = 0; b < BYTES_PER_HALF_ROW; b++)
-      this->write_byte(this->buffer_[row + b]);
-    if (y % 68 == 0) App.feed_wdt();
-  }
-  this->disable();
-
-  set_ram_master_();
-  send_command_(0x26);
-  this->dc_pin_->digital_write(true);
-  this->enable();
-  for (uint32_t y = 0; y < 272; y++) {
-    uint32_t row = y * BYTES_PER_ROW;
-    for (uint32_t b = BYTES_PER_HALF_ROW - 1; b < BYTES_PER_ROW; b++)
-      this->write_byte(this->buffer_[row + b]);
-    if (y % 68 == 0) App.feed_wdt();
-  }
-  this->disable();
 }
 
 void CrowPanel579::draw_absolute_pixel_internal(int x, int y, Color color) {
@@ -172,17 +142,7 @@ void CrowPanel579::reset_() {
   this->reset_pin_->digital_write(false);
   delay(10);
   this->reset_pin_->digital_write(true);
-  // The busy pin has an external pulldown, so it reads LOW while dormant —
-  // including during deep sleep mode 1. After RST goes HIGH the chip takes
-  // up to ~100 ms to drive BUSY HIGH to signal it has started its internal
-  // reset. Calling wait_busy_() immediately would see the pulldown LOW and
-  // return before the chip is ready, causing subsequent commands to race.
-  // Wait up to 200 ms for BUSY to go HIGH first, then LOW (reset complete).
-  uint32_t t = millis();
-  while (!this->busy_pin_->digital_read() && millis() - t < 200) {
-    App.feed_wdt();
-    delay(5);
-  }
+  delay(10);
   this->wait_busy_();
 }
 
