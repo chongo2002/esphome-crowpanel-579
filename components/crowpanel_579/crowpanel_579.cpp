@@ -142,7 +142,17 @@ void CrowPanel579::reset_() {
   this->reset_pin_->digital_write(false);
   delay(10);
   this->reset_pin_->digital_write(true);
-  delay(10);
+  // The busy pin has an external pulldown, so it reads LOW while dormant —
+  // including during deep sleep mode 1. After RST goes HIGH the chip takes
+  // up to ~100 ms to drive BUSY HIGH to signal it has started its internal
+  // reset. Calling wait_busy_() immediately would see the pulldown LOW and
+  // return before the chip is ready, causing subsequent commands to race.
+  // Wait up to 200 ms for BUSY to go HIGH first, then LOW (reset complete).
+  uint32_t t = millis();
+  while (!this->busy_pin_->digital_read() && millis() - t < 200) {
+    App.feed_wdt();
+    delay(5);
+  }
   this->wait_busy_();
 }
 
