@@ -1,7 +1,7 @@
 name: "Dashboard Render (E-Paper)"
 version: "1.0.1"
 slug: "dashboard_render"
-description: "Screenshots a Home Assistant Lovelace view and renders it as a dithered 1-bit PNG for e-paper displays (e.g. CrowPanel 5.79)"
+description: "Screenshots a Home Assistant Lovelace view and renders it as a 1-bit PNG for e-paper displays (e.g. CrowPanel 5.79)"
 url: "https://github.com/samperk1/esphome-crowpanel-579"
 arch:
   - amd64
