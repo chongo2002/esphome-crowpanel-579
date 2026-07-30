@@ -1,0 +1,104 @@
+# Mirrors a Home Assistant dashboard screenshot on the CrowPanel 5.79" e-paper display.
+# Physical display: 792 x 272 px (landscape, no rotation)
+
+substitutions:
+  device_name: crowpanel-sadie
+
+esphome:
+  name: ${device_name}
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: "y"
+      CONFIG_SPIRAM_RODATA: "y"
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [crowpanel_579]
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+spi:
+  clk_pin: GPIO12
+  mosi_pin: GPIO11
+
+display:
+  - platform: crowpanel_579
+    id: my_display
+    cs_pin: GPIO45
+    dc_pin: GPIO46
+    reset_pin: GPIO47
+    busy_pin:
+      number: GPIO48
+      mode:
+        input: true
+        pulldown: true
+    power_pin: GPIO7
+    auto_clear_enabled: false
+    update_interval: never
+
+# ── Home Assistant dashboard mirror ───────────────────────────────────────────
+# The render service (ha_addon_dashboard_render/ in the driver repo) screenshots
+# a Lovelace view, reduces it to a 1-bit 792x272 PNG, and writes it to
+# /config/www/dashboard.png, which HA serves at http://<ha-host>:8123/local/...
+#
+# online_image's type: BINARY only does a hard runtime threshold -- the render
+# service already applies that same threshold before saving, so this is a no-op
+# at runtime. Don't point this at a raw grayscale/color screenshot instead.
+
+http_request:
+  verify_ssl: false   # set true if your HA instance has a valid TLS certificate
+
+button:
+  - platform: template
+    name: "Refresh Dashboard"
+    on_press:
+      - component.update: dashboard_image
+
+online_image:
+  - id: dashboard_image
+    url: !secret dashboard_url
+    format: PNG
+    type: BINARY
+    resize: 792x272   # pin to the panel's exact resolution, even if the fetched PNG is off by a pixel
+    update_interval: 5min
+    on_download_finished:
+      - then:
+          - lambda: |-
+              // Clear the whole buffer before drawing. online_image letterboxes
+              // rather than stretches on any size mismatch -- without this,
+              // whatever sliver it leaves uncovered keeps whatever the previous
+              // refresh drew there, and that residue compounds refresh after
+              // refresh until the panel looks messy after a few hours of updates.
+              id(my_display).fill(Color::BLACK);  // Color::BLACK = white paper
+              // This driver's lambda-mode color convention is inverted (see README):
+              // Color::WHITE draws black ink, Color::BLACK draws white paper.
+              // Swap color_on/color_off here so bright dashboard pixels come out
+              // as white paper instead of black ink.
+              id(my_display).image(0, 0, id(dashboard_image), Color::BLACK, Color::WHITE);
+              id(my_display).display();
+    on_error:
+      - logger.log: "Dashboard image download failed"

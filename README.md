@@ -219,16 +219,43 @@ display:
 
 You can have the panel display a screenshot of a Home Assistant Lovelace view, refreshed on a timer. Two pieces are involved:
 
-1. **A render service** (runs on your HA host) — screenshots the dashboard with a headless browser, dithers it to a 1-bit 792×272 PNG, and writes it to `/config/www/dashboard.png` (HA serves anything in `/config/www/` at `http://<ha-host>:8123/local/...`, no extra web server needed).
+1. **A render service** (runs on your HA host) — screenshots the dashboard with a headless browser, reduces it to a 1-bit 792×272 PNG, and writes it to `/config/www/dashboard.png` (HA serves anything in `/config/www/` at `http://<ha-host>:8123/local/...`, no extra web server needed).
 2. **The ESPHome device** — fetches that PNG over HTTP with `online_image` and draws it with `it.image()` + `display()`.
 
 A ready-made render service is included in [`ha_addon_dashboard_render/`](ha_addon_dashboard_render) (Home Assistant local add-on: Playwright + Pillow). The ESPHome side is just two blocks added to your existing device YAML (step 4 below) — there's no separate example file, since it needs to merge into whatever config you're already using to flash the device.
 
-> **Why dithering happens on the HA side, not the ESP32 side:** ESPHome's `online_image` component with `type: BINARY` only does a hard per-pixel luminance threshold at runtime — it does not dither. Feeding it a plain grayscale screenshot produces visible banding on text and UI chrome. The render service pre-dithers with Floyd–Steinberg before saving, so the threshold ESPHome applies afterward is a no-op (every pixel is already pure black or white).
+> **Why the 1-bit conversion happens on the HA side, not the ESP32 side:** ESPHome's `online_image` component with `type: BINARY` only does a hard per-pixel luminance threshold at runtime. The render service screenshots at 2x resolution and downscales with a sharp filter so text/icon edges anti-alias cleanly, then applies that same hard threshold itself before saving, so the threshold `online_image` applies afterward is a no-op (every pixel is already pure black or white). Floyd–Steinberg dithering was used here previously, but it scatters the edges of small text and icons into black/white noise — good for photographic gradients, bad for UI chrome — so it was dropped in favor of the threshold.
 
 ### 1. Build a Lovelace view sized for the panel
 
 Create a dashboard view sized to 792×272 (or your desired aspect ratio — `online_image`'s `resize:` will letterbox rather than stretch a mismatched aspect ratio, so getting the render close to 792×272 up front looks best). A `type: panel` view removes Lovelace's default padding. If you want the header/sidebar hidden entirely for a clean render, the community [kiosk-mode](https://github.com/NemesisRE/kiosk-mode) integration (via HACS) is the standard way to do that per-dashboard.
+
+**Apply the e-paper theme so the render is pure black-on-white.** `render.py`'s 1-bit threshold can only work with what it's given — Home Assistant's default theme uses a muted gray for secondary text and icons (by design, for hierarchy on a color screen), which is exactly what a threshold either drops or fragments. Fix this at the source instead of fighting it in post-processing:
+
+1. Copy [`ha_addon_dashboard_render/epaper_theme.yaml`](ha_addon_dashboard_render/epaper_theme.yaml) into your HA `config/themes/` directory.
+2. Make sure `configuration.yaml` loads themes: `frontend:` with `themes: !include_dir_merge_named themes` (add this if you don't already have a `themes:` block).
+3. On the dashboard view used for the render, set **Theme: epaper** (per-view, in the view's visual editor settings, or `theme: epaper` in YAML mode) so only this view is affected, not your normal HA UI.
+
+This covers text, dividers, and most mdi icons, since they key off the theme's color variables. It won't recolor Home Assistant's built-in weather condition icon, though — that's rendered by a dedicated `<ha-weather-icon>` component with a multi-color illustration (sun/cloud/rain) whose SVG shapes have colors baked in directly (not `currentColor`, and not driven by theme variables), inside their own nested shadow root. To flatten it to a solid black silhouette, install the [card-mod](https://github.com/thomasloven/lovelace-card-mod) integration (via HACS) and add to the weather card — note the `$` after `ha-weather-icon`, which tells card-mod to inject the style *inside* that component's shadow root rather than stopping at the card's own:
+
+```yaml
+type: weather-forecast
+entity: weather.forecast_home
+card_mod:
+  style: |
+    ha-state-icon, ha-icon, img, svg {
+      filter: brightness(0) !important;
+    }
+    ha-weather-icon$: |
+      svg * {
+        fill: #000 !important;
+        filter: none !important;
+      }
+```
+
+If the icon still doesn't turn black, the frontend version in use may name the component differently — right-click the icon in your browser, choose **Inspect**, and check the actual custom-element tag name in the shadow root shown in devtools, then swap it in for `ha-weather-icon` above.
+
+Separately, the icons only get as many physical pixels to work with as the compact 792×272 render viewport gives them — a quick comparison in a normal-size browser tab will always look sharper than the panel's native resolution allows, since that tab has far more room per icon. If icons are still too indistinct at 792×272 even once fully black, the next lever is a bigger `--mdc-icon-size` via the same `card_mod` block, not more image post-processing.
 
 ### 2. Allow the render service to load the dashboard without a login prompt
 
@@ -270,10 +297,18 @@ online_image:
     url: "http://homeassistant.local:8123/local/dashboard.png"
     format: PNG
     type: BINARY
+    resize: 792x272   # pin to the panel's exact resolution, even if the fetched PNG is off by a pixel
     update_interval: 5min
     on_download_finished:
       - then:
           - lambda: |-
+              // Clear the whole buffer before drawing. online_image letterboxes
+              // rather than stretches on any size mismatch (a render.py hiccup, a
+              // dashboard layout reflow, etc.) -- without this, whatever sliver it
+              // leaves uncovered keeps whatever the previous refresh drew there,
+              // and that residue compounds refresh after refresh until the panel
+              // looks messy after a few hours of updates.
+              id(my_display).fill(Color::BLACK);  // Color::BLACK = white paper
               // This driver's lambda-mode color convention is inverted (see the
               // color note above): Color::WHITE draws black ink, Color::BLACK
               // draws white paper. Swap color_on/color_off here so bright
@@ -288,7 +323,18 @@ Set the `display:` entry's `update_interval:` to `never` — redraws are now dri
 
 > **Colors inverted (dashboard looks like a photo negative)?** You forgot the `Color::BLACK, Color::WHITE` arguments above — `it.image()` defaults to the normal ESPHome sense (bright = white), which this driver's `Color::WHITE`-means-black-ink convention flips.
 
+> **Display getting messy after a few hours?** That's almost always this missing `fill()` call, not a hardware fault. `render.py` always writes exactly the configured `width`×`height`, but Chromium's layout can still shift by a pixel or two between renders (font hinting, async content, a forecast row gaining/losing a column) — enough for `online_image`'s letterboxing to leave a thin strip undrawn on one edge. Each such refresh accumulates one more sliver of stale ink from whatever was there before, and because every refresh is a full `display()` (not a `partial_refresh()`), the stale sliver never gets targeted directly — it just quietly persists and compounds. `fill(Color::BLACK)` before every `image()` call guarantees the whole panel starts from a known-clean white buffer each time, regardless of the incoming PNG's exact placement.
+
 Because every refresh is a full `display()` call rather than a `partial_refresh()`, there's no ghosting to manage — each refresh redraws the whole panel from a clean waveform.
+
+### Alternative approaches to a clear display
+
+The screenshot-and-threshold approach above is fundamentally a workaround: Home Assistant's Lovelace frontend is designed for color screens, so every muted secondary-text color, illustrated icon, and anti-aliased edge has to be fought back to pure black/white after the fact. Two other projects for this same panel take a different path worth knowing about — both render content *natively* at the panel's actual resolution instead of screenshotting a browser and reducing it:
+
+- **[weather-crow5.7](https://github.com/kotamorishi/weather-crow5.7)** — a standalone PlatformIO/Arduino sketch (not ESPHome) for this same CrowPanel 5.79" hardware. It fetches weather data directly from the OpenWeatherMap API on-device and draws it using custom bitmap fonts and a purpose-built weather icon set, pre-converted from SVG to 1-bit bitmaps for this exact panel resolution (see its `tools/svgToBmp.py` and `tools/ttfToEPD.py`). Because the icons are rasterized once, offline, at the target size and bit depth, there's no thresholding guesswork at runtime — the tradeoff is it's a separate firmware from ESPHome, tied to OpenWeatherMap rather than Home Assistant, and needs its own build tooling to add or change icons.
+- **[ESPboards' CrowPanel e-paper + LVGL guide](https://www.espboards.dev/blog/elecrow-crowpanel-epaper-esphome-lvgl/)** — stays within ESPHome (via a separate [`esphome-lvgl-crowpanel-epaper-5.79-4.2`](https://github.com/ESPBoards/esphome-lvgl-crowpanel-epaper-5.79-4.2) external component) but replaces lambda/image drawing with LVGL, so the dashboard is a native LVGL UI built with ESPHome's LVGL Designer rather than an image fetched over HTTP. Text renders crisp because LVGL fonts are declared with `bpp: 1` (1-bit glyphs, no anti-aliasing to threshold), and ghosting is managed with a `full_update_every: N` setting that forces a full-refresh flash every N partial updates instead of on every single one. It doesn't cover Home Assistant integration at all — entity data would need to be wired in separately via ESPHome's `homeassistant` platform sensors/text_sensors bound to LVGL widgets.
+
+In short: if the muted icon/text clarity fight in this README keeps being a problem, the more durable fix is one of these — pushing rendering (fonts, icons, layout) onto the ESP32 itself via LVGL or pre-baked bitmaps, rather than trying to recover clarity from a lossy screenshot after the fact. That's a bigger rework than tuning `render.py`, so it's noted here as a direction rather than something this repo currently does.
 
 ---
 

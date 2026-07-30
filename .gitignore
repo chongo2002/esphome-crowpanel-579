@@ -1,2 +1,6 @@
 __pycache__/
 *.pyc
+
+# Local ESPHome device config -- contains real credentials, never commit
+secrets.yaml
+.esphome/

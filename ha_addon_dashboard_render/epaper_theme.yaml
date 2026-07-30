@@ -1,0 +1,23 @@
+epaper:
+  # Forces the Lovelace view to pure black-on-white before it's ever
+  # screenshotted, so render.py's 1-bit threshold has nothing ambiguous
+  # left to decide. Home Assistant's default "secondary" text/icon color
+  # is a muted gray by design (for visual hierarchy on a color screen) --
+  # on a 1-bit e-paper panel that gray is exactly what gets lost or
+  # fragmented by a threshold. Overriding it here, at the source, is more
+  # reliable than trying to recover it after the fact in image post-processing.
+  primary-color: "#000000"
+  primary-text-color: "#000000"
+  secondary-text-color: "#000000"
+  disabled-text-color: "#000000"
+  divider-color: "#000000"
+  state-icon-color: "#000000"
+  paper-item-icon-color: "#000000"
+  paper-item-icon-active-color: "#000000"
+  label-badge-text-color: "#000000"
+  primary-background-color: "#ffffff"
+  secondary-background-color: "#ffffff"
+  card-background-color: "#ffffff"
+  ha-card-background: "#ffffff"
+  app-header-background-color: "#ffffff"
+  app-header-text-color: "#000000"
